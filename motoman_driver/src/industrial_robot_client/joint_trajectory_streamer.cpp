@@ -155,6 +155,11 @@ void JointTrajectoryStreamer::jointTrajectoryCB(const trajectory_msgs::JointTraj
   if (!trajectory_to_msgs(msg, &new_traj_msgs))
     return;
 
+  // Store the traj message for logging to a topic on send
+  this->mutex_.lock();
+  this->current_traj_msg_ = msg;
+  this->mutex_.unlock();
+
   // send command messages to robot
   send_to_robot(new_traj_msgs);
 }

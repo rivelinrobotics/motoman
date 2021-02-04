@@ -31,6 +31,7 @@
 
 #include "motoman_driver/joint_trajectory_streamer.h"
 #include "motoman_driver/simple_message/motoman_motion_reply_message.h"
+#include "sensor_msgs/JointState.h"
 #include "simple_message/messages/joint_traj_pt_full_message.h"
 #include "motoman_driver/simple_message/messages/joint_traj_pt_full_ex_message.h"
 #include "industrial_robot_client/utils.h"
@@ -38,6 +39,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <chrono>
 
 namespace CommTypes = industrial::simple_message::CommTypes;
 namespace ReplyTypes = industrial::simple_message::ReplyTypes;
@@ -113,6 +115,8 @@ bool MotomanJointTrajectoryStreamer::init(SmplMsgConnection* connection, const s
   disabler_ = node_.advertiseService("robot_disable", &MotomanJointTrajectoryStreamer::disableRobotCB, this);
 
   enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
+
+  joint_command_ = node_.advertise<sensor_msgs::JointState>("joint_command", 1000);
 
   return rtn;
 }
@@ -369,6 +373,9 @@ bool MotomanJointTrajectoryStreamer::VectorToJointData(const std::vector<double>
 // override send_to_robot to provide controllerReady() and setTrajMode() calls
 bool MotomanJointTrajectoryStreamer::send_to_robot(const std::vector<SimpleMessage>& messages)
 {
+  if (this->current_traj_msg_->points.size() != messages.size())
+      ROS_ERROR_RETURN(false, "Original trajectory message differs in length %ld != %ld from simple message vector!?!", this->current_traj_msg_->points.size(), messages.size());
+
   if (!motion_ctrl_.controllerReady())
     ROS_ERROR_RETURN(false, "Failed to initialize MotoRos motion, trajectory execution ABORTED. If safe, call the 'robot_enable' service to (re-)enable Motoplus motion and retry.");
 
@@ -405,6 +412,8 @@ void MotomanJointTrajectoryStreamer::streamingThread()
     this->mutex_.lock();
 
     SimpleMessage msg, tmpMsg, reply;
+    sensor_msgs::JointState js;
+    std::chrono::system_clock::time_point start;
 
     switch (this->state_)
     {
@@ -428,9 +437,13 @@ void MotomanJointTrajectoryStreamer::streamingThread()
       }
 
       tmpMsg = this->current_traj_[this->current_point_];
+      js.position = this->current_traj_msg_->points[this->current_point_].positions;
+      js.header.stamp = ros::Time::now();
+
       msg.init(tmpMsg.getMessageType(), CommTypes::SERVICE_REQUEST,
                ReplyTypes::INVALID, tmpMsg.getData());  // set commType=REQUEST
 
+      start = std::chrono::high_resolution_clock::now();
       if (!this->connection_->sendAndReceiveMsg(msg, reply, false))
         ROS_WARN("Failed sent joint point, will try again");
       else
@@ -445,6 +458,11 @@ void MotomanJointTrajectoryStreamer::streamingThread()
 
         if (reply_status.reply_.getResult() == MotionReplyResults::SUCCESS)
         {
+          auto ack_time = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count();
+          double t =    ack_time / 1e9;
+          js.velocity = std::vector<double> {(double) t};
+            joint_command_.publish(js);
+
           ROS_DEBUG("Point[%d of %d] sent to controller",
                     this->current_point_, static_cast<int>(this->current_traj_.size()));
           this->current_point_++;

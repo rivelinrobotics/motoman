@@ -143,6 +143,7 @@ protected:
   static bool VectorToJointData(const std::vector<double> &vec,
                                 industrial::joint_data::JointData &joints);
 
+  ros::Publisher joint_command_;
   /**
    * \brief Service used to disable the robot controller.  When disabled,
    * all incoming goals are ignored.

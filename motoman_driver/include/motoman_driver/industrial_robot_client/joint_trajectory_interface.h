@@ -362,6 +362,7 @@ protected:
   sensor_msgs::JointState cur_joint_pos_;  // cache of last received joint state
 
   std::map<int, sensor_msgs::JointState> cur_joint_pos_map_;
+  trajectory_msgs::JointTrajectoryConstPtr current_traj_msg_;
 
 private:
   /**
