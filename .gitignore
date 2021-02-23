@@ -40,3 +40,9 @@ motoman_driver/MotoPlus/_buildLog/MotoROSYRC1000.log
 motoman_driver/MotoPlus/_buildLog/MotoROSYRC1000u.log
 *.cache
 *.user
+/.idea/.gitignore
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/motoman.iml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/vcs.xml
