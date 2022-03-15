@@ -33,8 +33,7 @@
 #include "motoman_driver/simple_message/messages/motoman_motion_reply_message.h"
 #include "simple_message/messages/joint_traj_pt_full_message.h"
 #include "motoman_driver/simple_message/messages/joint_traj_pt_full_ex_message.h"
-#include <motoman_driver/MotomanErrors.h>
-#include <motoman_driver/MotomanStatus.h>
+#include "motoman_msgs/MotorosError.h"
 #include "industrial_robot_client/utils.h"
 #include "industrial_utils/param_utils.h"
 #include <map>
@@ -100,6 +99,8 @@ namespace motoman
 
       srv_select_tool_ = node_.advertiseService("select_tool", &MotomanJointTrajectoryStreamer::selectToolCB, this);
 
+      motoros_error_pub_ = node_.advertise<motoman_msgs::MotorosError>("motoros_error", 10);
+
       return rtn;
     }
 
@@ -124,6 +125,8 @@ namespace motoman
       enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
 
       srv_select_tool_ = node_.advertiseService("select_tool", &MotomanJointTrajectoryStreamer::selectToolCB, this);
+
+      motoros_error_pub_ = node_.advertise<motoman_msgs::MotorosError>("motoros_error", 10);
 
       return rtn;
     }
@@ -654,6 +657,13 @@ namespace motoman
           motoman_driver::MotomanStatus status;
           status.status = motoman_driver::MotomanStatus::IDLE;
           this->motoman_status_pub_.publish(status);
+
+          motoman_msgs::MotorosError error;
+          error.code = reply_status.reply_.getResult();
+          error.subcode = reply_status.reply_.getSubcode();
+          error.code_description = reply_status.reply_.getResultString();
+          error.subcode_description = reply_status.reply_.getSubcodeString();
+          motoros_error_pub_.publish(error);
           break;
         }
         // this does not unlock smpl_msg_conx_mutex_, but the mutex from JointTrajectoryStreamer
