@@ -1,0 +1,10 @@
+# Statuses
+int32 UNDEFINED = 0
+int32 INITIALISED = 1
+int32 STARTED = 2
+int32 FINISHED = 3
+int32 STOPPED = 4
+int32 TIMEOUT = 5
+int32 ERROR = 6
+
+int32 status

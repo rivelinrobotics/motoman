@@ -57,6 +57,9 @@ bool JointTrajectoryStreamer::init(SmplMsgConnection* connection, const std::map
   this->mutex_.lock();
   this->current_point_ = 0;
   this->state_ = TransferStates::IDLE;
+  motoman_driver::MotomanFeedback feedback;
+  feedback.status = motoman_driver::MotomanFeedback::INITIALISED;
+  motoman_feedback_pub_.publish(feedback);
   this->streaming_thread_ =
     new boost::thread(boost::bind(&JointTrajectoryStreamer::streamingThread, this));
   ROS_INFO("Unlocking mutex");
@@ -77,6 +80,9 @@ bool JointTrajectoryStreamer::init(SmplMsgConnection* connection, const std::vec
   this->mutex_.lock();
   this->current_point_ = 0;
   this->state_ = TransferStates::IDLE;
+  motoman_driver::MotomanFeedback feedback;
+  feedback.status = motoman_driver::MotomanFeedback::INITIALISED;
+  motoman_feedback_pub_.publish(feedback);
   this->streaming_thread_ =
     new boost::thread(boost::bind(&JointTrajectoryStreamer::streamingThread, this));
   ROS_INFO("Unlocking mutex");
@@ -190,6 +196,9 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
       motoman_driver::MotomanErrors error;
       error.code = motoman_driver::MotomanErrors::CMD_MUST_HAVE_SINGLE_POINT;
       motoman_errors_pub_.publish(error);
+      motoman_driver::MotomanFeedback feedback;
+      feedback.status = motoman_driver::MotomanFeedback::ERROR;
+      motoman_feedback_pub_.publish(feedback);
       return;
     }
 
@@ -364,6 +373,9 @@ bool JointTrajectoryStreamer::send_to_robot(const std::vector<SimpleMessage>& me
     this->current_traj_ = messages;
     this->current_point_ = 0;
     this->state_ = TransferStates::STREAMING;
+    motoman_driver::MotomanFeedback feedback;
+    feedback.status = motoman_driver::MotomanFeedback::STARTED;
+    motoman_feedback_pub_.publish(feedback);
     this->streaming_start_ = ros::Time::now();
   }
   this->mutex_.unlock();
@@ -433,6 +445,9 @@ void JointTrajectoryStreamer::streamingThread()
       {
         ROS_ERROR("Timeout connecting to robot controller.  Send new motion command to retry.");
         this->state_ = TransferStates::IDLE;
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::TIMEOUT;
+        motoman_feedback_pub_.publish(feedback);
       }
       continue;
     }
@@ -452,6 +467,9 @@ void JointTrajectoryStreamer::streamingThread()
       {
         ROS_INFO("Trajectory streaming complete, setting state to IDLE");
         this->state_ = TransferStates::IDLE;
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::FINISHED;
+        motoman_feedback_pub_.publish(feedback);
         break;
       }
 
@@ -485,6 +503,9 @@ void JointTrajectoryStreamer::streamingThread()
       {
         ROS_INFO("Point streaming complete, setting state to IDLE");
         this->state_ = TransferStates::IDLE;
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::FINISHED;
+        motoman_feedback_pub_.publish(feedback);
         break;
       }
       // if not connected, reconnect.
@@ -519,6 +540,9 @@ void JointTrajectoryStreamer::streamingThread()
     default:
       ROS_ERROR("Joint trajectory streamer: unknown state, %d", this->state_);
       this->state_ = TransferStates::IDLE;
+      motoman_driver::MotomanFeedback feedback;
+      feedback.status = motoman_driver::MotomanFeedback::ERROR;
+      motoman_feedback_pub_.publish(feedback);
       break;
     }
 
@@ -538,6 +562,9 @@ void JointTrajectoryStreamer::trajectoryStop()
 
   ROS_DEBUG("Stop command sent, entering idle mode");
   this->state_ = TransferStates::IDLE;
+    motoman_driver::MotomanFeedback feedback;
+    feedback.status = motoman_driver::MotomanFeedback::STOPPED;
+    motoman_feedback_pub_.publish(feedback);
 }
 
 }  // namespace joint_trajectory_streamer
