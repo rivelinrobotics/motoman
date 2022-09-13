@@ -192,7 +192,6 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
     if (num_msg_points > 1)
     {
       ROS_ERROR("JointTrajectory command must contain a single point, ignoring message and maintaining IDLE state");
-//      Publish error: Command must contain single point
       motoman_driver::MotomanErrors error;
       error.code = motoman_driver::MotomanErrors::CMD_MUST_HAVE_SINGLE_POINT;
       motoman_errors_pub_.publish(error);
@@ -231,10 +230,12 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
       {
         ROS_ERROR("Starting joint point must contain zero velocity for each joint,"
                   " unable to transition to on-the-fly streaming");
-//        Publish error: Command must contain zero velocity for each joint
         motoman_driver::MotomanErrors error;
         error.code = motoman_driver::MotomanErrors::CMD_MUST_HAVE_ZERO_VELOCITY;
         motoman_errors_pub_.publish(error);
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::ERROR;
+        motoman_feedback_pub_.publish(feedback);
         return;
       }
     }
@@ -273,10 +274,12 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
     else if (num_msg_points != 1)  // Check for invalid number of trajectory points
     {
       ROS_ERROR("JointTrajectory command must contain a single point");
-//      Publish error: Command must contain a single point
       motoman_driver::MotomanErrors error;
       error.code = motoman_driver::MotomanErrors::CMD_MUST_HAVE_SINGLE_POINT;
       motoman_errors_pub_.publish(error);
+      motoman_driver::MotomanFeedback feedback;
+      feedback.status = motoman_driver::MotomanFeedback::ERROR;
+      motoman_feedback_pub_.publish(feedback);
       stop_trajectory = true;
     }
     else  // We have at one point, let check for timing if we are not the start point
@@ -286,10 +289,12 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
       {
         ROS_ERROR("JointTrajectory point must have a time from start duration that is greater than the previously "
                   "processes point");
-//        Publish error: Incorrect time from start
         motoman_driver::MotomanErrors error;
         error.code = motoman_driver::MotomanErrors::CMD_HAS_INCORRECT_TIME_FROM_START;
         motoman_errors_pub_.publish(error);
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::ERROR;
+        motoman_feedback_pub_.publish(feedback);
         stop_trajectory = true;
       }
     }
@@ -297,10 +302,12 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
     if (ptstreaming_queue_.size() > max_ptstreaming_queue_elements)  // Check for max queue size
     {
       ROS_ERROR("Point streaming queue has reached max allowed elements");
-//      Publish error: point streamer queue overflow
       motoman_driver::MotomanErrors error;
       error.code = motoman_driver::MotomanErrors::STREAMING_QUEUE_OVERFLOW;
       motoman_errors_pub_.publish(error);
+      motoman_driver::MotomanFeedback feedback;
+      feedback.status = motoman_driver::MotomanFeedback::ERROR;
+      motoman_feedback_pub_.publish(feedback);
       stop_trajectory = true;
     }
 
@@ -351,10 +358,12 @@ void JointTrajectoryStreamer::jointCommandCB(const trajectory_msgs::JointTraject
       ROS_INFO("Empty trajectory received, canceling current trajectory");
     else {
         ROS_ERROR("Trajectory splicing not yet implemented, stopping current motion.");
-//        Publish error: Splicing not allowed (state is not IDLE or STREAMING
         motoman_driver::MotomanErrors error;
         error.code = motoman_driver::MotomanErrors::SPLICING_NOT_ALLOWED;
         motoman_errors_pub_.publish(error);
+        motoman_driver::MotomanFeedback feedback;
+        feedback.status = motoman_driver::MotomanFeedback::ERROR;
+        motoman_feedback_pub_.publish(feedback);
     }
 
     this->mutex_.lock();
@@ -562,9 +571,9 @@ void JointTrajectoryStreamer::trajectoryStop()
 
   ROS_DEBUG("Stop command sent, entering idle mode");
   this->state_ = TransferStates::IDLE;
-    motoman_driver::MotomanFeedback feedback;
-    feedback.status = motoman_driver::MotomanFeedback::STOPPED;
-    motoman_feedback_pub_.publish(feedback);
+  motoman_driver::MotomanFeedback feedback;
+  feedback.status = motoman_driver::MotomanFeedback::STOPPED;
+  motoman_feedback_pub_.publish(feedback);
 }
 
 }  // namespace joint_trajectory_streamer
