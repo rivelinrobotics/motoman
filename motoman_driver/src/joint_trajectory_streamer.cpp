@@ -43,9 +43,9 @@ namespace CommTypes = industrial::simple_message::CommTypes;
 namespace ReplyTypes = industrial::simple_message::ReplyTypes;
 using industrial::joint_data::JointData;
 using industrial::joint_traj_pt_full::JointTrajPtFull;
-using industrial::joint_traj_pt_full_message::JointTrajPtFullMessage;
 using industrial::joint_traj_pt_full_ex::JointTrajPtFullEx;
 using industrial::joint_traj_pt_full_ex_message::JointTrajPtFullExMessage;
+using industrial::joint_traj_pt_full_message::JointTrajPtFullMessage;
 using industrial::shared_types::shared_int;
 
 using motoman::simple_message::motion_reply_message::MotionReplyMessage;
@@ -54,496 +54,525 @@ namespace MotionReplyResults = motoman::simple_message::motion_reply::MotionRepl
 
 namespace motoman
 {
-namespace joint_trajectory_streamer
-{
-
-namespace
-{
-  const double pos_stale_time_ = 1.0;  // max time since last "current position" update, for validation (sec)
-  const double start_pos_tol_  = 1e-4;  // max difference btwn start & current position, for validation (rad)
-}
-
-#define ROS_ERROR_RETURN(rtn, ...) do {ROS_ERROR(__VA_ARGS__); return(rtn);} while (0)  // NOLINT(whitespace/braces)
-
-// override init() to read "robot_id" parameter and subscribe to joint_states
-bool MotomanJointTrajectoryStreamer::init(SmplMsgConnection* connection, const std::map<int, RobotGroup> &robot_groups,
-    const std::map<std::string, double> &velocity_limits)
-{
-  bool rtn = true;
-
-  ROS_INFO("MotomanJointTrajectoryStreamer: init");
-
-  this->robot_groups_ = robot_groups;
-  rtn &= JointTrajectoryStreamer::init(connection, robot_groups, velocity_limits);
-
-  motion_ctrl_.init(connection, 0);
-  for (size_t i = 0; i < robot_groups_.size(); i++)
+  namespace joint_trajectory_streamer
   {
-    MotomanMotionCtrl motion_ctrl;
 
-    int robot_id = robot_groups_[i].get_group_id();
-    rtn &= motion_ctrl.init(connection, robot_id);
-
-    motion_ctrl_map_[robot_id] = motion_ctrl;
-  }
-
-  disabler_ = node_.advertiseService("robot_disable", &MotomanJointTrajectoryStreamer::disableRobotCB, this);
-
-  enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
-
-  return rtn;
-}
-
-// override init() to read "robot_id" parameter and subscribe to joint_states
-bool MotomanJointTrajectoryStreamer::init(SmplMsgConnection* connection, const std::vector<std::string> &joint_names,
-    const std::map<std::string, double> &velocity_limits)
-{
-  bool rtn = true;
-
-  ROS_INFO("MotomanJointTrajectoryStreamer: init");
-
-  rtn &= JointTrajectoryStreamer::init(connection, joint_names, velocity_limits);
-
-  // try to read robot_id parameter, if none specified
-  if ((robot_id_ < 0))
-    node_.param("robot_id", robot_id_, 0);
-
-  rtn &= motion_ctrl_.init(connection, robot_id_);
-
-  disabler_ = node_.advertiseService("robot_disable", &MotomanJointTrajectoryStreamer::disableRobotCB, this);
-
-  enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
-
-  return rtn;
-}
-
-MotomanJointTrajectoryStreamer::~MotomanJointTrajectoryStreamer()
-{
-  // TODO( ): Find better place to call StopTrajMode
-  motion_ctrl_.setTrajMode(false);   // release TrajMode, so INFORM jobs can run
-}
-
-bool MotomanJointTrajectoryStreamer::disableRobotCB(std_srvs::Trigger::Request &req,
-                                           std_srvs::Trigger::Response &res)
-{
-  trajectoryStop();
-
-  bool ret = motion_ctrl_.setTrajMode(false);
-  res.success = ret;
-
-  if (!res.success)
-  {
-    res.message = "Motoman robot was NOT disabled. Please re-examine and retry.";
-    ROS_ERROR_STREAM(res.message);
-  }
-  else
-  {
-    res.message = "Motoman robot is now disabled and will NOT accept motion commands.";
-    ROS_WARN_STREAM(res.message);
-  }
-
-  return true;
-}
-
-bool MotomanJointTrajectoryStreamer::enableRobotCB(std_srvs::Trigger::Request& req, std_srvs::Trigger::Response& res)
-{
-  bool ret = motion_ctrl_.setTrajMode(true);
-  res.success = ret;
-
-  if (!res.success)
-  {
-    res.message = "Motoman robot was NOT enabled. Please re-examine and retry.";
-    ROS_ERROR_STREAM(res.message);
-  }
-  else
-  {
-    res.message = "Motoman robot is now enabled and will accept motion commands.";
-    ROS_WARN_STREAM(res.message);
-  }
-
-  return true;
-}
-
-// override create_message to generate JointTrajPtFull message (instead of default JointTrajPt)
-bool MotomanJointTrajectoryStreamer::create_message(int seq, const trajectory_msgs::JointTrajectoryPoint& pt,
-                                                    SimpleMessage* msg)
-{
-  JointTrajPtFull msg_data;
-  JointData values;
-
-  // copy position data
-  if (!pt.positions.empty())
-  {
-    if (VectorToJointData(pt.positions, values))
-      msg_data.setPositions(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearPositions();
-
-  // copy velocity data
-  if (!pt.velocities.empty())
-  {
-    if (VectorToJointData(pt.velocities, values))
-      msg_data.setVelocities(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearVelocities();
-
-  // copy acceleration data
-  if (!pt.accelerations.empty())
-  {
-    if (VectorToJointData(pt.accelerations, values))
-      msg_data.setAccelerations(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearAccelerations();
-
-  // copy scalar data
-  msg_data.setRobotID(robot_id_);
-  msg_data.setSequence(seq);
-  msg_data.setTime(pt.time_from_start.toSec());
-
-
-  // convert to message
-  JointTrajPtFullMessage jtpf_msg;
-  jtpf_msg.init(msg_data);
-
-  return jtpf_msg.toRequest(*msg);  // assume "request" COMM_TYPE for now
-}
-
-bool MotomanJointTrajectoryStreamer::create_message_ex(int seq, const motoman_msgs::DynamicJointPoint& point,
-                                                       SimpleMessage* msg)
-{
-  JointTrajPtFullEx msg_data_ex;
-  JointTrajPtFullExMessage jtpf_msg_ex;
-  std::vector<industrial::joint_traj_pt_full::JointTrajPtFull> msg_data_vector;
-
-  JointData values;
-
-  int num_groups = point.num_groups;
-
-  for (int i = 0; i < num_groups; i++)
-  {
-    JointTrajPtFull msg_data;
-
-    motoman_msgs::DynamicJointsGroup pt;
-
-    motoman_msgs::DynamicJointPoint dpoint;
-
-    pt = point.groups[i];
-
-    if (pt.positions.size() < 10)
+    namespace
     {
-      int size_to_complete = 10 - pt.positions.size();
-
-      std::vector<double> positions(size_to_complete, 0.0);
-      std::vector<double> velocities(size_to_complete, 0.0);
-      std::vector<double> accelerations(size_to_complete, 0.0);
-
-      pt.positions.insert(pt.positions.end(), positions.begin(), positions.end());
-      pt.velocities.insert(pt.velocities.end(), velocities.begin(), velocities.end());
-      pt.accelerations.insert(pt.accelerations.end(), accelerations.begin(), accelerations.end());
+      const double pos_stale_time_ = 1.0; // max time since last "current position" update, for validation (sec)
+      const double start_pos_tol_ = 1e-4; // max difference btwn start & current position, for validation (rad)
     }
 
-    // copy position data
-    if (!pt.positions.empty())
+#define ROS_ERROR_RETURN(rtn, ...) \
+  do                               \
+  {                                \
+    ROS_ERROR(__VA_ARGS__);        \
+    return (rtn);                  \
+  } while (0) // NOLINT(whitespace/braces)
+
+    // override init() to read "robot_id" parameter and subscribe to joint_states
+    bool MotomanJointTrajectoryStreamer::init(SmplMsgConnection *connection, const std::map<int, RobotGroup> &robot_groups,
+                                              const std::map<std::string, double> &velocity_limits)
     {
-      if (VectorToJointData(pt.positions, values))
-        msg_data.setPositions(values);
-      else
-        ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
-    }
-    else
-      msg_data.clearPositions();
-    // copy velocity data
-    if (!pt.velocities.empty())
-    {
-      if (VectorToJointData(pt.velocities, values))
-        msg_data.setVelocities(values);
-      else
-        ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
-    }
-    else
-      msg_data.clearVelocities();
+      bool rtn = true;
 
-    // copy acceleration data
-    if (!pt.accelerations.empty())
-    {
-      if (VectorToJointData(pt.accelerations, values))
-        msg_data.setAccelerations(values);
-      else
-        ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
-    }
-    else
-      msg_data.clearAccelerations();
+      ROS_INFO("MotomanJointTrajectoryStreamer: init");
 
-    // copy scalar data
-    msg_data.setRobotID(pt.group_number);
-    msg_data.setSequence(seq);
-    msg_data.setTime(pt.time_from_start.toSec());
+      this->robot_groups_ = robot_groups;
+      rtn &= JointTrajectoryStreamer::init(connection, robot_groups, velocity_limits);
 
-    // convert to message
-    msg_data_vector.push_back(msg_data);
-  }
-
-  msg_data_ex.setMultiJointTrajPtData(msg_data_vector);
-  msg_data_ex.setNumGroups(num_groups);
-  msg_data_ex.setSequence(seq);
-  jtpf_msg_ex.init(msg_data_ex);
-
-  return jtpf_msg_ex.toRequest(*msg);  // assume "request" COMM_TYPE for now
-}
-
-bool MotomanJointTrajectoryStreamer::create_message(int seq, const motoman_msgs::DynamicJointsGroup& pt,
-                                                    SimpleMessage* msg)
-{
-  JointTrajPtFull msg_data;
-  JointData values;
-  // copy position data
-  if (!pt.positions.empty())
-  {
-    if (VectorToJointData(pt.positions, values))
-      msg_data.setPositions(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearPositions();
-
-  // copy velocity data
-  if (!pt.velocities.empty())
-  {
-    if (VectorToJointData(pt.velocities, values))
-      msg_data.setVelocities(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearVelocities();
-
-  // copy acceleration data
-  if (!pt.accelerations.empty())
-  {
-    if (VectorToJointData(pt.accelerations, values))
-      msg_data.setAccelerations(values);
-    else
-      ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
-  }
-  else
-    msg_data.clearAccelerations();
-
-  // copy scalar data
-  msg_data.setRobotID(pt.group_number);
-
-  msg_data.setSequence(seq);
-  msg_data.setTime(pt.time_from_start.toSec());
-
-  // convert to message
-  JointTrajPtFullMessage jtpf_msg;
-  jtpf_msg.init(msg_data);
-
-  return jtpf_msg.toRequest(*msg);  // assume "request" COMM_TYPE for now
-}
-
-bool MotomanJointTrajectoryStreamer::VectorToJointData(const std::vector<double> &vec,
-    JointData &joints)
-{
-  if (static_cast<int>(vec.size()) > joints.getMaxNumJoints())
-    ROS_ERROR_RETURN(false, "Failed to copy to JointData.  Len (%d) out of range (0 to %d)",
-                     (int)vec.size(), joints.getMaxNumJoints());
-
-  joints.init();
-  for (size_t i = 0; i < vec.size(); ++i)
-  {
-    joints.setJoint(i, vec[i]);
-  }
-  return true;
-}
-
-// override send_to_robot to provide controllerReady() and setTrajMode() calls
-bool MotomanJointTrajectoryStreamer::send_to_robot(const std::vector<SimpleMessage>& messages)
-{
-  if (!motion_ctrl_.controllerReady())
-    ROS_ERROR_RETURN(false, "Failed to initialize MotoRos motion, trajectory execution ABORTED. If safe, call the "
-                            "'robot_enable' service to (re-)enable Motoplus motion and retry.");
-
-  return JointTrajectoryStreamer::send_to_robot(messages);
-}
-
-// override streamingThread, to provide check/retry of MotionReply.result=BUSY
-void MotomanJointTrajectoryStreamer::streamingThread()
-{
-  int connectRetryCount = 1;
-
-  ROS_INFO("Starting Motoman joint trajectory streamer thread");
-  while (ros::ok())
-  {
-    ros::Duration(0.005).sleep();
-
-    // automatically re-establish connection, if required
-    if (connectRetryCount-- > 0)
-    {
-      ROS_INFO("Connecting to robot motion server");
-      this->connection_->makeConnect();
-      ros::Duration(0.250).sleep();  // wait for connection
-
-      if (this->connection_->isConnected())
-        connectRetryCount = 0;
-      else if (connectRetryCount <= 0)
+      motion_ctrl_.init(connection, 0);
+      for (size_t i = 0; i < robot_groups_.size(); i++)
       {
-        ROS_ERROR("Timeout connecting to robot controller.  Send new motion command to retry.");
-        this->state_ = TransferStates::IDLE;
-      }
-      continue;
-    }
+        MotomanMotionCtrl motion_ctrl;
 
-    this->mutex_.lock();
+        int robot_id = robot_groups_[i].get_group_id();
+        rtn &= motion_ctrl.init(connection, robot_id);
 
-    SimpleMessage msg, tmpMsg, reply;
-
-    switch (this->state_)
-    {
-    case TransferStates::IDLE:
-      ros::Duration(0.250).sleep();  //  slower loop while waiting for new trajectory
-      break;
-
-    case TransferStates::STREAMING:
-      if (this->current_point_ >= static_cast<int>(this->current_traj_.size()))
-      {
-        ROS_INFO("Trajectory streaming complete, setting state to IDLE");
-        this->state_ = TransferStates::IDLE;
-        break;
+        motion_ctrl_map_[robot_id] = motion_ctrl;
       }
 
-      if (!this->connection_->isConnected())
+      disabler_ = node_.advertiseService("robot_disable", &MotomanJointTrajectoryStreamer::disableRobotCB, this);
+
+      enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
+
+      return rtn;
+    }
+
+    // override init() to read "robot_id" parameter and subscribe to joint_states
+    bool MotomanJointTrajectoryStreamer::init(SmplMsgConnection *connection, const std::vector<std::string> &joint_names,
+                                              const std::map<std::string, double> &velocity_limits)
+    {
+      bool rtn = true;
+
+      ROS_INFO("MotomanJointTrajectoryStreamer: init");
+
+      rtn &= JointTrajectoryStreamer::init(connection, joint_names, velocity_limits);
+
+      // try to read robot_id parameter, if none specified
+      if ((robot_id_ < 0))
+        node_.param("robot_id", robot_id_, 0);
+
+      rtn &= motion_ctrl_.init(connection, robot_id_);
+
+      disabler_ = node_.advertiseService("robot_disable", &MotomanJointTrajectoryStreamer::disableRobotCB, this);
+
+      enabler_ = node_.advertiseService("robot_enable", &MotomanJointTrajectoryStreamer::enableRobotCB, this);
+
+      return rtn;
+    }
+
+    MotomanJointTrajectoryStreamer::~MotomanJointTrajectoryStreamer()
+    {
+      // TODO( ): Find better place to call StopTrajMode
+      motion_ctrl_.setTrajMode(false); // release TrajMode, so INFORM jobs can run
+    }
+
+    bool MotomanJointTrajectoryStreamer::disableRobotCB(std_srvs::Trigger::Request &req,
+                                                        std_srvs::Trigger::Response &res)
+    {
+      trajectoryStop();
+
+      bool ret = motion_ctrl_.setTrajMode(false);
+      res.success = ret;
+
+      if (!res.success)
       {
-        ROS_DEBUG("Robot disconnected.  Attempting reconnect...");
-        connectRetryCount = 5;
-        break;
+        res.message = "Motoman robot was NOT disabled. Please re-examine and retry.";
+        ROS_ERROR_STREAM(res.message);
       }
-
-      tmpMsg = this->current_traj_[this->current_point_];
-      msg.init(tmpMsg.getMessageType(), CommTypes::SERVICE_REQUEST,
-               ReplyTypes::INVALID, tmpMsg.getData());  // set commType=REQUEST
-
-      if (!this->connection_->sendAndReceiveMsg(msg, reply, false))
-        ROS_WARN("Failed sent joint point, will try again");
       else
       {
-        MotionReplyMessage reply_status;
-        if (!reply_status.init(reply))
-        {
-          ROS_ERROR("Aborting trajectory: Unable to parse JointTrajectoryPoint reply");
-          this->state_ = TransferStates::IDLE;
-          break;
-        }
+        res.message = "Motoman robot is now disabled and will NOT accept motion commands.";
+        ROS_WARN_STREAM(res.message);
+      }
 
-        if (reply_status.reply_.getResult() == MotionReplyResults::SUCCESS)
-        {
-          ROS_DEBUG("Point[%d of %d] sent to controller",
-                    this->current_point_, static_cast<int>(this->current_traj_.size()));
-          this->current_point_++;
-        }
-        else if (reply_status.reply_.getResult() == MotionReplyResults::BUSY)
-          break;  // silently retry sending this point
+      return true;
+    }
+
+    bool MotomanJointTrajectoryStreamer::enableRobotCB(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res)
+    {
+      bool ret = motion_ctrl_.setTrajMode(true);
+      res.success = ret;
+
+      if (!res.success)
+      {
+        res.message = "Motoman robot was NOT enabled. Please re-examine and retry.";
+        ROS_ERROR_STREAM(res.message);
+      }
+      else
+      {
+        res.message = "Motoman robot is now enabled and will accept motion commands.";
+        ROS_WARN_STREAM(res.message);
+      }
+
+      return true;
+    }
+
+    // override create_message to generate JointTrajPtFull message (instead of default JointTrajPt)
+    bool MotomanJointTrajectoryStreamer::create_message(int seq, const trajectory_msgs::JointTrajectoryPoint &pt,
+                                                        SimpleMessage *msg)
+    {
+      JointTrajPtFull msg_data;
+      JointData values;
+
+      // copy position data
+      if (!pt.positions.empty())
+      {
+        if (VectorToJointData(pt.positions, values))
+          msg_data.setPositions(values);
         else
+          ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearPositions();
+
+      // copy velocity data
+      if (!pt.velocities.empty())
+      {
+        if (VectorToJointData(pt.velocities, values))
+          msg_data.setVelocities(values);
+        else
+          ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearVelocities();
+
+      // copy acceleration data
+      if (!pt.accelerations.empty())
+      {
+        if (VectorToJointData(pt.accelerations, values))
+          msg_data.setAccelerations(values);
+        else
+          ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearAccelerations();
+
+      // copy scalar data
+      msg_data.setRobotID(robot_id_);
+      msg_data.setSequence(seq);
+      msg_data.setTime(pt.time_from_start.toSec());
+
+      // convert to message
+      JointTrajPtFullMessage jtpf_msg;
+      jtpf_msg.init(msg_data);
+
+      return jtpf_msg.toRequest(*msg); // assume "request" COMM_TYPE for now
+    }
+
+    bool MotomanJointTrajectoryStreamer::create_message_ex(int seq, const motoman_msgs::DynamicJointPoint &point,
+                                                           SimpleMessage *msg)
+    {
+      JointTrajPtFullEx msg_data_ex;
+      JointTrajPtFullExMessage jtpf_msg_ex;
+      std::vector<industrial::joint_traj_pt_full::JointTrajPtFull> msg_data_vector;
+
+      JointData values;
+
+      int num_groups = point.num_groups;
+
+      for (int i = 0; i < num_groups; i++)
+      {
+        JointTrajPtFull msg_data;
+
+        motoman_msgs::DynamicJointsGroup pt;
+
+        motoman_msgs::DynamicJointPoint dpoint;
+
+        pt = point.groups[i];
+
+        if (pt.positions.size() < 10)
         {
-          ROS_ERROR_STREAM("Aborting Trajectory.  Failed to send point"
-                           << " (#" << this->current_point_ << "): "
-                           << MotomanMotionCtrl::getErrorString(reply_status.reply_));
+          int size_to_complete = 10 - pt.positions.size();
+
+          std::vector<double> positions(size_to_complete, 0.0);
+          std::vector<double> velocities(size_to_complete, 0.0);
+          std::vector<double> accelerations(size_to_complete, 0.0);
+
+          pt.positions.insert(pt.positions.end(), positions.begin(), positions.end());
+          pt.velocities.insert(pt.velocities.end(), velocities.begin(), velocities.end());
+          pt.accelerations.insert(pt.accelerations.end(), accelerations.begin(), accelerations.end());
+        }
+
+        // copy position data
+        if (!pt.positions.empty())
+        {
+          if (VectorToJointData(pt.positions, values))
+            msg_data.setPositions(values);
+          else
+            ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
+        }
+        else
+          msg_data.clearPositions();
+        // copy velocity data
+        if (!pt.velocities.empty())
+        {
+          if (VectorToJointData(pt.velocities, values))
+            msg_data.setVelocities(values);
+          else
+            ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
+        }
+        else
+          msg_data.clearVelocities();
+
+        // copy acceleration data
+        if (!pt.accelerations.empty())
+        {
+          if (VectorToJointData(pt.accelerations, values))
+            msg_data.setAccelerations(values);
+          else
+            ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
+        }
+        else
+          msg_data.clearAccelerations();
+
+        // copy scalar data
+        msg_data.setRobotID(pt.group_number);
+        msg_data.setSequence(seq);
+        msg_data.setTime(pt.time_from_start.toSec());
+
+        // convert to message
+        msg_data_vector.push_back(msg_data);
+      }
+
+      msg_data_ex.setMultiJointTrajPtData(msg_data_vector);
+      msg_data_ex.setNumGroups(num_groups);
+      msg_data_ex.setSequence(seq);
+      jtpf_msg_ex.init(msg_data_ex);
+
+      return jtpf_msg_ex.toRequest(*msg); // assume "request" COMM_TYPE for now
+    }
+
+    bool MotomanJointTrajectoryStreamer::create_message(int seq, const motoman_msgs::DynamicJointsGroup &pt,
+                                                        SimpleMessage *msg)
+    {
+      JointTrajPtFull msg_data;
+      JointData values;
+      // copy position data
+      if (!pt.positions.empty())
+      {
+        if (VectorToJointData(pt.positions, values))
+          msg_data.setPositions(values);
+        else
+          ROS_ERROR_RETURN(false, "Failed to copy position data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearPositions();
+
+      // copy velocity data
+      if (!pt.velocities.empty())
+      {
+        if (VectorToJointData(pt.velocities, values))
+          msg_data.setVelocities(values);
+        else
+          ROS_ERROR_RETURN(false, "Failed to copy velocity data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearVelocities();
+
+      // copy acceleration data
+      if (!pt.accelerations.empty())
+      {
+        if (VectorToJointData(pt.accelerations, values))
+          msg_data.setAccelerations(values);
+        else
+          ROS_ERROR_RETURN(false, "Failed to copy acceleration data to JointTrajPtFullMessage");
+      }
+      else
+        msg_data.clearAccelerations();
+
+      // copy scalar data
+      msg_data.setRobotID(pt.group_number);
+
+      msg_data.setSequence(seq);
+      msg_data.setTime(pt.time_from_start.toSec());
+
+      // convert to message
+      JointTrajPtFullMessage jtpf_msg;
+      jtpf_msg.init(msg_data);
+
+      return jtpf_msg.toRequest(*msg); // assume "request" COMM_TYPE for now
+    }
+
+    bool MotomanJointTrajectoryStreamer::VectorToJointData(const std::vector<double> &vec,
+                                                           JointData &joints)
+    {
+      if (static_cast<int>(vec.size()) > joints.getMaxNumJoints())
+        ROS_ERROR_RETURN(false, "Failed to copy to JointData.  Len (%d) out of range (0 to %d)",
+                         (int)vec.size(), joints.getMaxNumJoints());
+
+      joints.init();
+      for (size_t i = 0; i < vec.size(); ++i)
+      {
+        joints.setJoint(i, vec[i]);
+      }
+      return true;
+    }
+
+    // override send_to_robot to provide controllerReady() and setTrajMode() calls
+    bool MotomanJointTrajectoryStreamer::send_to_robot(const std::vector<SimpleMessage> &messages)
+    {
+      if (!motion_ctrl_.controllerReady())
+        ROS_ERROR_RETURN(false, "Failed to initialize MotoRos motion, trajectory execution ABORTED. If safe, call the "
+                                "'robot_enable' service to (re-)enable Motoplus motion and retry.");
+
+      return JointTrajectoryStreamer::send_to_robot(messages);
+    }
+
+    // override streamingThread, to provide check/retry of MotionReply.result=BUSY
+    void MotomanJointTrajectoryStreamer::streamingThread()
+    {
+      int connectRetryCount = 1;
+
+      ROS_INFO("Starting Motoman joint trajectory streamer thread");
+      while (ros::ok())
+      {
+        ros::Duration(0.005).sleep();
+
+        // automatically re-establish connection, if required
+        if (connectRetryCount-- > 0)
+        {
+          ROS_INFO("Connecting to robot motion server");
+          this->connection_->makeConnect();
+          ros::Duration(0.250).sleep(); // wait for connection
+
+          if (this->connection_->isConnected())
+            connectRetryCount = 0;
+          else if (connectRetryCount <= 0)
+          {
+            ROS_ERROR("Timeout connecting to robot controller.  Send new motion command to retry.");
+            this->state_ = TransferStates::IDLE;
+          }
+          continue;
+        }
+
+        this->mutex_.lock();
+
+        SimpleMessage msg, tmpMsg, reply;
+
+        switch (this->state_)
+        {
+        case TransferStates::IDLE:
+          ros::Duration(0.250).sleep(); //  slower loop while waiting for new trajectory
+          break;
+
+        case TransferStates::STREAMING:
+          if (this->current_point_ >= static_cast<int>(this->current_traj_.size()))
+          {
+            ROS_INFO("Trajectory streaming complete, setting state to IDLE");
+            this->state_ = TransferStates::IDLE;
+            break;
+          }
+
+          if (!this->connection_->isConnected())
+          {
+            ROS_DEBUG("Robot disconnected.  Attempting reconnect...");
+            connectRetryCount = 5;
+            break;
+          }
+
+          tmpMsg = this->current_traj_[this->current_point_];
+          msg.init(tmpMsg.getMessageType(), CommTypes::SERVICE_REQUEST,
+                   ReplyTypes::INVALID, tmpMsg.getData()); // set commType=REQUEST
+
+          if (!this->connection_->sendAndReceiveMsg(msg, reply, false))
+            ROS_WARN("Failed sent joint point, will try again");
+          else
+          {
+            MotionReplyMessage reply_status;
+            if (!reply_status.init(reply))
+            {
+              ROS_ERROR("Aborting trajectory: Unable to parse JointTrajectoryPoint reply");
+              this->state_ = TransferStates::IDLE;
+              break;
+            }
+
+            if (reply_status.reply_.getResult() == MotionReplyResults::SUCCESS)
+            {
+              ROS_DEBUG("Point[%d of %d] sent to controller",
+                        this->current_point_, static_cast<int>(this->current_traj_.size()));
+              this->current_point_++;
+            }
+            else if (reply_status.reply_.getResult() == MotionReplyResults::BUSY)
+              break; // silently retry sending this point
+            else
+            {
+              ROS_ERROR_STREAM("Aborting Trajectory.  Failed to send point"
+                               << " (#" << this->current_point_ << "): "
+                               << MotomanMotionCtrl::getErrorString(reply_status.reply_));
+              this->state_ = TransferStates::IDLE;
+              break;
+            }
+          }
+          break;
+        default:
+          ROS_ERROR("Joint trajectory streamer: unknown state");
           this->state_ = TransferStates::IDLE;
           break;
         }
+        this->mutex_.unlock();
       }
-      break;
-    default:
-      ROS_ERROR("Joint trajectory streamer: unknown state");
-      this->state_ = TransferStates::IDLE;
-      break;
+      ROS_WARN("Exiting trajectory streamer thread");
     }
-    this->mutex_.unlock();
-  }
-  ROS_WARN("Exiting trajectory streamer thread");
-}
 
-// override trajectoryStop to send MotionCtrl message
-void MotomanJointTrajectoryStreamer::trajectoryStop()
-{
-  this->state_ = TransferStates::IDLE;  // stop sending trajectory points
-  motion_ctrl_.stopTrajectory();
-}
-
-// override is_valid to include FS100-specific checks
-bool MotomanJointTrajectoryStreamer::is_valid(const trajectory_msgs::JointTrajectory &traj)
-{
-  if (!JointTrajectoryInterface::is_valid(traj))
-    return false;
-
-  for (size_t i = 0; i < traj.points.size(); ++i)
-  {
-    const trajectory_msgs::JointTrajectoryPoint &pt = traj.points[i];
-
-    // FS100 requires valid velocity data
-    if (pt.velocities.empty())
-      ROS_ERROR_RETURN(false, "Validation failed: Missing velocity data for trajectory pt %lu", i);
-  }
-
-  if ((cur_joint_pos_.header.stamp - ros::Time::now()).toSec() > pos_stale_time_)
-    ROS_ERROR_RETURN(false, "Validation failed: Can't get current robot position.");
-
-  // FS100 requires trajectory start at current position
-  namespace IRC_utils = industrial_robot_client::utils;
-  if (!IRC_utils::isWithinRange(cur_joint_pos_.name, cur_joint_pos_.position,
-                                traj.joint_names, traj.points[0].positions,
-                                start_pos_tol_))
-  {
-    ROS_ERROR_RETURN(false, "Validation failed: Trajectory doesn't start at current position.");
-  }
-  return true;
-}
-
-bool MotomanJointTrajectoryStreamer::is_valid(const motoman_msgs::DynamicJointTrajectory &traj)
-{
-  if (!JointTrajectoryInterface::is_valid(traj))
-    return false;
-  ros::Time time_stamp;
-  int group_number;
-  for (size_t i = 0; i < traj.points.size(); ++i)
-  {
-    for (int gr = 0; gr < traj.points[i].num_groups; gr++)
+    // override trajectoryStop to send MotionCtrl message
+    void MotomanJointTrajectoryStreamer::trajectoryStop()
     {
-      const motoman_msgs::DynamicJointsGroup &pt = traj.points[i].groups[gr];
-      time_stamp = cur_joint_pos_map_[pt.group_number].header.stamp;
-      // TODO( ): adjust for more joints
-      group_number = pt.group_number;
-      // FS100 requires valid velocity data
-      if (pt.velocities.empty())
-        ROS_ERROR_RETURN(false, "Validation failed: Missing velocity data for trajectory pt %lu", i);
+      this->state_ = TransferStates::IDLE; // stop sending trajectory points
+      motion_ctrl_.stopTrajectory();
+    }
+
+    // override is_valid to include FS100-specific checks
+    bool MotomanJointTrajectoryStreamer::is_valid(const trajectory_msgs::JointTrajectory &traj)
+    {
+      if (!JointTrajectoryInterface::is_valid(traj))
+        return false;
+
+      for (size_t i = 0; i < traj.points.size(); ++i)
+      {
+        const trajectory_msgs::JointTrajectoryPoint &pt = traj.points[i];
+
+        // FS100 requires valid velocity data
+        if (pt.velocities.empty())
+          ROS_ERROR_RETURN(false, "Validation failed: Missing velocity data for trajectory pt %lu", i);
+      }
+
+      if ((cur_joint_pos_.header.stamp - ros::Time::now()).toSec() > pos_stale_time_)
+        ROS_ERROR_RETURN(false, "Validation failed: Can't get current robot position.");
 
       // FS100 requires trajectory start at current position
       namespace IRC_utils = industrial_robot_client::utils;
-
-      if (!IRC_utils::isWithinRange(cur_joint_pos_map_[group_number].name, cur_joint_pos_map_[group_number].position,
-                                    traj.joint_names, traj.points[0].groups[gr].positions,
+      if (!IRC_utils::isWithinRange(cur_joint_pos_.name, cur_joint_pos_.position,
+                                    traj.joint_names, traj.points[0].positions,
                                     start_pos_tol_))
       {
+        std::cout << "Reaching error function 1" << std::endl;
+        std::cout << "cur_joint_pos_.name: " << cur_joint_pos_.name << std::endl;
+        for (const auto &a : cur_joint_pos_.position)
+        {
+          std::cout << "cur_joint_pos_.position: " << cur_joint_pos_.position << std::endl;
+        }
+        std::cout << "traj.joint_names: " << traj.joint_names << std::endl;
+        for (const auto &a : traj.points[0].positions)
+        {
+          std::cout << "traj.points[0].positions: " << traj.points[0].positions << std::endl;
+        }
+        std::cout << "start_pos_tol_: " << start_pos_tol_ << std::endl;
+
         ROS_ERROR_RETURN(false, "Validation failed: Trajectory doesn't start at current position.");
       }
+      return true;
     }
-  }
 
-  if ((time_stamp - ros::Time::now()).toSec() > pos_stale_time_)
-    ROS_ERROR_RETURN(false, "Validation failed: Can't get current robot position.");
+    bool MotomanJointTrajectoryStreamer::is_valid(const motoman_msgs::DynamicJointTrajectory &traj)
+    {
+      if (!JointTrajectoryInterface::is_valid(traj))
+        return false;
+      ros::Time time_stamp;
+      int group_number;
+      for (size_t i = 0; i < traj.points.size(); ++i)
+      {
+        for (int gr = 0; gr < traj.points[i].num_groups; gr++)
+        {
+          const motoman_msgs::DynamicJointsGroup &pt = traj.points[i].groups[gr];
+          time_stamp = cur_joint_pos_map_[pt.group_number].header.stamp;
+          // TODO( ): adjust for more joints
+          group_number = pt.group_number;
+          // FS100 requires valid velocity data
+          if (pt.velocities.empty())
+            ROS_ERROR_RETURN(false, "Validation failed: Missing velocity data for trajectory pt %lu", i);
 
-  return true;
-}
+          // FS100 requires trajectory start at current position
+          namespace IRC_utils = industrial_robot_client::utils;
 
-}  // namespace joint_trajectory_streamer
-}  // namespace motoman
+          if (!IRC_utils::isWithinRange(cur_joint_pos_map_[group_number].name, cur_joint_pos_map_[group_number].position,
+                                        traj.joint_names, traj.points[0].groups[gr].positions,
+                                        start_pos_tol_))
+          {
+            std::cout << "Reaching error function 2" << std::endl;
+            std::cout << "cur_joint_pos_.name: " << cur_joint_pos_.name << std::endl;
+            for (const auto &a : cur_joint_pos_.position)
+            {
+              std::cout << "cur_joint_pos_.position: " << cur_joint_pos_.position << std::endl;
+            }
+            std::cout << "traj.joint_names: " << traj.joint_names << std::endl;
+            for (const auto &a : traj.points[0].positions)
+            {
+              std::cout << "traj.points[0].positions: " << traj.points[0].positions << std::endl;
+            }
+            std::cout << "start_pos_tol_: " << start_pos_tol_ << std::endl;
 
+            ROS_ERROR_RETURN(false, "Validation failed: Trajectory doesn't start at current position.");
+          }
+        }
+      }
+
+      if ((time_stamp - ros::Time::now()).toSec() > pos_stale_time_)
+        ROS_ERROR_RETURN(false, "Validation failed: Can't get current robot position.");
+
+      return true;
+    }
+
+  } // namespace joint_trajectory_streamer
+} // namespace motoman
