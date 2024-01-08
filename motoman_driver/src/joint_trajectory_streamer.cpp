@@ -557,11 +557,11 @@ namespace motoman
                                         start_pos_tol_))
           {
             std::cout << "Reaching error function 2" << std::endl;
-            for (const auto &a : cur_joint_pos_.name)
+            for (const auto &a : cur_joint_pos_map_[group_number].name)
             {
               std::cout << "cur_joint_pos_.name: " << a << std::endl;
             }
-            for (const auto &b : cur_joint_pos_.position)
+            for (const auto &b : cur_joint_pos_map_[group_number].position)
             {
               std::cout << "cur_joint_pos_.position: " << b << std::endl;
             }
@@ -569,7 +569,7 @@ namespace motoman
             {
               std::cout << "traj.joint_names: " << c << std::endl;
             }
-            for (const auto &d : traj.points[0].positions)
+            for (const auto &d : traj.points[0].groups[gr].positions)
             {
               std::cout << "traj.points[0].positions: " << d << std::endl;
             }
