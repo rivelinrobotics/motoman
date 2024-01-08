@@ -510,19 +510,19 @@ namespace motoman
         std::cout << "Reaching error function 1" << std::endl;
         for (const auto &a : cur_joint_pos_.name)
         {
-          std::cout << "cur_joint_pos_.name: " << cur_joint_pos_.name << std::endl;
+          std::cout << "cur_joint_pos_.name: " << a << std::endl;
         }
-        for (const auto &a : cur_joint_pos_.position)
+        for (const auto &b : cur_joint_pos_.position)
         {
-          std::cout << "cur_joint_pos_.position: " << cur_joint_pos_.position << std::endl;
+          std::cout << "cur_joint_pos_.position: " << b << std::endl;
         }
-        for (const auto &a : traj.joint_names)
+        for (const auto &c : traj.joint_names)
         {
-          std::cout << "traj.joint_names: " << traj.joint_names << std::endl;
+          std::cout << "traj.joint_names: " << c << std::endl;
         }
-        for (const auto &a : traj.points[0].positions)
+        for (const auto &d : traj.points[0].positions)
         {
-          std::cout << "traj.points[0].positions: " << traj.points[0].positions << std::endl;
+          std::cout << "traj.points[0].positions: " << d << std::endl;
         }
         std::cout << "start_pos_tol_: " << start_pos_tol_ << std::endl;
 
@@ -557,15 +557,21 @@ namespace motoman
                                         start_pos_tol_))
           {
             std::cout << "Reaching error function 2" << std::endl;
-            std::cout << "cur_joint_pos_.name: " << cur_joint_pos_.name << std::endl;
-            for (const auto &a : cur_joint_pos_.position)
+            for (const auto &a : cur_joint_pos_.name)
             {
-              std::cout << "cur_joint_pos_.position: " << cur_joint_pos_.position << std::endl;
+              std::cout << "cur_joint_pos_.name: " << a << std::endl;
             }
-            std::cout << "traj.joint_names: " << traj.joint_names << std::endl;
-            for (const auto &a : traj.points[0].positions)
+            for (const auto &b : cur_joint_pos_.position)
             {
-              std::cout << "traj.points[0].positions: " << traj.points[0].positions << std::endl;
+              std::cout << "cur_joint_pos_.position: " << b << std::endl;
+            }
+            for (const auto &c : traj.joint_names)
+            {
+              std::cout << "traj.joint_names: " << c << std::endl;
+            }
+            for (const auto &d : traj.points[0].positions)
+            {
+              std::cout << "traj.points[0].positions: " << d << std::endl;
             }
             std::cout << "start_pos_tol_: " << start_pos_tol_ << std::endl;
 
