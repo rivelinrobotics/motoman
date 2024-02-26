@@ -644,6 +644,14 @@ namespace motoman
                                << " (#" << this->current_point_ << "): "
                                << MotomanMotionCtrl::getErrorString(reply_status.reply_));
               this->state_ = TransferStates::IDLE;
+
+              motoman_msgs::MotorosError motoros_error;
+              motoros_error.code = reply_status.reply_.getResult();
+              motoros_error.subcode = reply_status.reply_.getSubcode();
+              motoros_error.code_description = reply_status.reply_.getResultString();
+              motoros_error.subcode_description = reply_status.reply_.getSubcodeString();
+              motoros_error_pub_.publish(motoros_error);
+
               motoman_driver::MotomanStatus status;
               status.status = motoman_driver::MotomanStatus::IDLE;
               this->motoman_status_pub_.publish(status);
@@ -664,13 +672,6 @@ namespace motoman
           motoman_driver::MotomanStatus status;
           status.status = motoman_driver::MotomanStatus::IDLE;
           this->motoman_status_pub_.publish(status);
-
-          motoman_msgs::MotorosError error;
-          error.code = reply_status.reply_.getResult();
-          error.subcode = reply_status.reply_.getSubcode();
-          error.code_description = reply_status.reply_.getResultString();
-          error.subcode_description = reply_status.reply_.getSubcodeString();
-          motoros_error_pub_.publish(error);
           break;
         }
         // this does not unlock smpl_msg_conx_mutex_, but the mutex from JointTrajectoryStreamer
