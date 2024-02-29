@@ -134,6 +134,11 @@ public:
 
   virtual void streamingThread();
 
+  /**
+   * \brief Safely disable Yaskawa arm before system shutdown.
+   */
+  void shutdown();
+
 protected:
   static constexpr double pos_stale_time_ = 1.0;  // max time since last "current position" update, for validation (sec)
   static constexpr double start_pos_tol_  = 3e-3; // max difference btwn start & current position, for validation (rad)
@@ -177,6 +182,12 @@ protected:
    * \brief Service used to select a specific tool file on the robot controller.
    */
   ros::ServiceServer srv_select_tool_;
+
+  /**
+   * \brief Publisher to announce motoros failures. This allows higher-level
+   * drivers to retry certain actions.
+   */
+  ros::Publisher motoros_error_pub_;
 
   /**
    * \brief Disable the robot. Response is true if the state was flipped or
