@@ -132,14 +132,14 @@
         <child link="${prefix}link_5_b"/>
         <origin xyz="0.795 0 0" rpy="0 0 0" />
         <axis xyz="0 -1 0" />
-        <limit lower="${radians(-155)}" upper="${radians(150)}" effort="70.56" velocity="${radians(420)}"/>
+        <limit lower="${radians(-110)}" upper="${radians(110)}" effort="70.56" velocity="${radians(420)}"/>
     </joint>
     <joint name="${prefix}joint_6_t" type="revolute">
         <parent link="${prefix}link_5_b"/>
         <child link="${prefix}link_6_t"/>
         <origin xyz="0 0 0" rpy="0 0 0" />
         <axis xyz="-1 0 0" />
-        <limit lower="${radians(-455)}" upper="${radians(455)}" effort="50.31" velocity="${radians(885)}"/>
+        <limit lower="${radians(-360)}" upper="${radians(360)}" effort="50.31" velocity="${radians(885)}"/>
     </joint>
     <joint name="${prefix}joint_6_t-tool0" type="fixed">
         <origin xyz="0.100 0 0" rpy="3.1415926 -1.570796 0"/>
