@@ -49,6 +49,7 @@ namespace joint_trajectory_action
 
 const double JointTrajectoryAction::WATCHD0G_PERIOD_ = 1.0;
 const double JointTrajectoryAction::DEFAULT_GOAL_THRESHOLD_ = 0.01;
+const double JointTrajectoryAction::DEFAULT_INITIAL_GOAL_THRESHOLD_ = 1e-3;
 
 JointTrajectoryAction::JointTrajectoryAction() :
   action_server_(node_, "joint_trajectory_action",
@@ -58,6 +59,7 @@ JointTrajectoryAction::JointTrajectoryAction() :
   ros::NodeHandle pn("~");
 
   pn.param("constraints/goal_threshold", goal_threshold_, DEFAULT_GOAL_THRESHOLD_);
+  pn.param("constraints/initial_goal_threshold", initial_goal_threshold_, DEFAULT_INITIAL_GOAL_THRESHOLD_);
 
   std::map<int, RobotGroup> robot_groups;
   if (!getJointGroups("topic_list", robot_groups))
@@ -335,7 +337,7 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh, int
       }
       // Sends the trajectory along to the controller
       if (withinGoalConstraints(last_trajectory_state_map_[group_number],
-                                gh.getGoal()->trajectory, group_number))
+                                gh.getGoal()->trajectory, group_number, initial_goal_threshold_))
       {
         ROS_INFO_STREAM("Already within goal constraints, setting goal succeeded");
         gh.setAccepted();
@@ -347,6 +349,8 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh, int
         gh.setAccepted();
         active_goal_map_[group_number] = gh;
         has_active_goal_map_[group_number]  = true;
+
+        has_seen_motion_ = false;
 
         ROS_INFO("Publishing trajectory");
 
@@ -481,11 +485,16 @@ void JointTrajectoryAction::controllerStateCB(
     return;
   }
 
+  if (!has_seen_motion_)
+  {
+    has_seen_motion_ = last_robot_status_->in_motion.val == industrial_msgs::TriState::TRUE;
+  } 
+
   // Checking for goal constraints
   // Checks that we have ended inside the goal constraints and has motion stopped
 
   ROS_DEBUG("Checking goal constraints");
-  if (withinGoalConstraints(last_trajectory_state_map_[robot_id], current_traj_map_[robot_id], robot_id))
+  if (withinGoalConstraints(last_trajectory_state_map_[robot_id], current_traj_map_[robot_id], robot_id, goal_threshold_) && has_seen_motion_)
   {
     if (last_robot_status_)
     {
@@ -545,11 +554,16 @@ void JointTrajectoryAction::controllerStateCB(
     return;
   }
 
+  if (!has_seen_motion_)
+  {
+    has_seen_motion_ = last_robot_status_->in_motion.val == industrial_msgs::TriState::TRUE;
+  } 
+
   // Checking for goal constraints
   // Checks that we have ended inside the goal constraints and has motion stopped
 
   ROS_DEBUG("Checking goal constraints");
-  if (withinGoalConstraints(last_trajectory_state_, current_traj_))
+  if (withinGoalConstraints(last_trajectory_state_, current_traj_, goal_threshold_) && has_seen_motion_)
   {
     if (last_robot_status_)
     {
@@ -609,7 +623,7 @@ void JointTrajectoryAction::abortGoal(int robot_id)
 
 bool JointTrajectoryAction::withinGoalConstraints(
   const control_msgs::FollowJointTrajectoryFeedbackConstPtr &msg,
-  const trajectory_msgs::JointTrajectory & traj)
+  const trajectory_msgs::JointTrajectory & traj, const double threshold)
 {
   bool rtn = false;
   if (traj.points.empty())
@@ -624,7 +638,7 @@ bool JointTrajectoryAction::withinGoalConstraints(
     if (industrial_robot_client::utils::isWithinRange(
           last_trajectory_state_->joint_names,
           last_trajectory_state_->actual.positions, traj.joint_names,
-          traj.points[last_point].positions, goal_threshold_))
+          traj.points[last_point].positions, threshold))
     {
       rtn = true;
     }
@@ -638,7 +652,7 @@ bool JointTrajectoryAction::withinGoalConstraints(
 
 bool JointTrajectoryAction::withinGoalConstraints(
   const control_msgs::FollowJointTrajectoryFeedbackConstPtr &msg,
-  const trajectory_msgs::JointTrajectory & traj, int robot_id)
+  const trajectory_msgs::JointTrajectory & traj, int robot_id, const double threshold)
 {
   bool rtn = false;
   if (traj.points.empty())
@@ -655,7 +669,7 @@ bool JointTrajectoryAction::withinGoalConstraints(
     if (industrial_robot_client::utils::isWithinRange(
           robot_groups_[group_number].get_joint_names(),
           last_trajectory_state_map_[group_number]->actual.positions, traj.joint_names,
-          traj.points[last_point].positions, goal_threshold_))
+          traj.points[last_point].positions, threshold))
     {
       rtn = true;
     }
